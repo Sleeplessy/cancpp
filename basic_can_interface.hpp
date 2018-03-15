@@ -7,87 +7,104 @@
 
 #include <string>
 #include <linux/can.h>
+#include <exception>
 #include <stdexcept>
 #include <net/if.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <unistd.h>
-#include <deque>
 
-struct socket_interface_t {
-    socket_interface_t() {};
+namespace CAN {
+    struct socket_interface_t {
+        socket_interface_t() {};
 
-    socket_interface_t(int socket) : holder(socket) {};
-    int holder;
-};
-
-
-
-template<typename __CAN_FRAME_T>
-class basic_can_interface {
-public:
-    basic_can_interface(const char *interface_name) : _interface_name(interface_name) {
-        const int protocol = CAN_RAW;
-        sockaddr_can addr;
-        ifreq ifr = {};
-        int can_sock = ::socket(PF_CAN, SOCK_RAW, protocol);
-        _interface_name.copy(ifr.ifr_name, _interface_name.size());
-        if (ioctl(can_sock, SIOCGIFINDEX, &ifr) < 0) {
-            std::string error_info = "[basic_can_interface]Error while syncing io with system.";
-            throw std::runtime_error(error_info);
-        }
-        addr.can_family = AF_CAN;
-        addr.can_ifindex = ifr.ifr_ifindex;
-        if (bind(can_sock, reinterpret_cast<const sockaddr *>(&addr), sizeof(addr)) < 0) {
-            std::string error_info = "[basic_can_interface]Error while opening cansock.";
-
-            throw std::runtime_error(error_info);
-        }
-        socket_holder = socket_interface_t(can_sock);
-    }
-
-    //const bool release(); // release binded socket
-    //const error_t open();
-    virtual const error_t close() = 0;
-
-    virtual __CAN_FRAME_T read() = 0;
-
-    virtual const error_t write(const __CAN_FRAME_T &frame_to_write) = 0;
-
-    socket_interface_t &socket() noexcept { return socket_holder; };
-
-    const std::string &ifterface_name() { return _interface_name; };
-
-    ~basic_can_interface() {}
-
-private:
-    std::string _interface_name;
-    socket_interface_t socket_holder;
-};
-
-
-class can_interface : public basic_can_interface<can_frame> {
-public:
-    can_interface(const char *interface_name) : basic_can_interface<can_frame>::basic_can_interface(interface_name),
-                                                socket_holder(socket()) {
-        socket_holder.holder;
-    }
-
-    const error_t close() override { return 0; }
-
-    can_frame read() override {
-        can_frame rev_buffer{};
-        std::size_t bytes_read = ::read(socket_holder.holder, &rev_buffer, sizeof(can_frame));
-        return rev_buffer;
+        socket_interface_t(int socket) : holder(socket) {};
+        int holder;
     };
 
-    const error_t write(const can_frame &frame_to_write) override {
-        std::size_t byte_written = ::write(socket_holder.holder, &frame_to_write, sizeof(can_frame));
-        return errno;
+    // EXCEPTIONS
+    class can_exception_t : public std::runtime_error {
+    public:
+        can_exception_t(std::string error_info) : runtime_error(error_info.insert(0, "CAN INTERFACE EXCEPTION: ")) {
+        }
+
+        can_exception_t() : runtime_error("CAN INTERFACE EXCEPTION: UNKNOW") {};
     };
-private:
-    socket_interface_t &socket_holder;
-};
+
+    class can_init_error : public can_exception_t {
+    public:
+        can_init_error() : can_exception_t("INIT FAILED.") {}
+
+        can_init_error(std::string &error_info) : can_exception_t(std::string("INIT FAILED.").append(error_info)) {}
+    };
+
+    class can_length_unmatch : public can_exception_t{
+    public:
+        can_length_unmatch() : can_exception_t("LENGTH OF DATA UNSUPPOSED."){}
+    };
+
+    template<typename __CAN_FRAME_T>
+    class basic_can_interface {
+    public:
+        basic_can_interface(const char *interface_name) : _interface_name(interface_name) {
+            const int protocol = CAN_RAW;
+            sockaddr_can addr;
+            ifreq ifr = {};
+            int can_sock = ::socket(PF_CAN, SOCK_RAW, protocol);
+            _interface_name.copy(ifr.ifr_name, _interface_name.size());
+            if (ioctl(can_sock, SIOCGIFINDEX, &ifr) < 0) {
+                throw can_init_error();
+            }
+            addr.can_family = AF_CAN;
+            addr.can_ifindex = ifr.ifr_ifindex;
+            if (bind(can_sock, reinterpret_cast<const sockaddr *>(&addr), sizeof(addr)) < 0) {
+
+                throw can_init_error();
+            }
+            socket_holder = socket_interface_t(can_sock);
+        }
+
+        virtual void close() = 0;
+
+        virtual __CAN_FRAME_T read() = 0;
+
+        virtual void write(const __CAN_FRAME_T &frame_to_write) = 0;
+
+        socket_interface_t &socket() noexcept { return socket_holder; };
+
+        const std::string &ifterface_name() { return _interface_name; };
+
+        ~basic_can_interface() {}
+
+    private:
+        std::string _interface_name;
+        socket_interface_t socket_holder;
+    };
 
 
+    class can_interface : public basic_can_interface<can_frame> {
+    public:
+        can_interface(const char *interface_name) : basic_can_interface<can_frame>::basic_can_interface(interface_name),
+                                                    socket_holder(socket()) {
+            socket_holder.holder;
+        }
+
+        void close() override { ::close(socket_holder.holder); }
+
+        can_frame read() override {
+            can_frame rev_buffer{};
+            if(::read(socket_holder.holder, &rev_buffer, sizeof(can_frame)) < sizeof(can_frame))
+                throw can_length_unmatch();
+            return rev_buffer;
+        };
+
+        void write(const can_frame &frame_to_write) override {
+            if(::write(socket_holder.holder, &frame_to_write, sizeof(can_frame))!=sizeof(can_frame))
+                throw can_length_unmatch();
+        };
+    private:
+        socket_interface_t &socket_holder;
+    };
+
+}
 #endif //EMU_CS_BASIC_CAN_INTERFACE_HPP

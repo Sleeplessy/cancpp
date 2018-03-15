@@ -1,11 +1,5 @@
 # C++ template style CAN-Bus interfaces
 
-## USAGE
-
-Include the basic_can_interface.hpp into your project and do something like:
-
-```C++
-# C++ template style CAN-Bus interfaces
 Provide C++ interface to both can_frame and canfd_frame.
 ## USAGE
 

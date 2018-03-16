@@ -22,6 +22,7 @@ try {
   // Some error handler, like open the socket again or other things you like
 } catch (...) {
   std::cout << e.what() << std::endl;
+  throw; // A-O, I just re-throw it :)
 }
 ```
 
